@@ -1,0 +1,7 @@
+run run_training.py -N 10 --dim-phys 1 -a 0.1 -b 0 -beta 20 -d 2 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000
+
+run_training.py -N 10 --dim-phys 1 -pt uncoupled -pa 10 -a 0.1 -b 0 -beta 20 -d 2 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000 -wtn directbb -tv 0.7 -tlbd 100 
+
+run_training.py -N 100 --dim-phys 1 -pt uncoupled -pa 10 -a 0.1 -b 0 -beta 20 -d 2 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000 -wtn directemp1000 -tv 0.7 -tlbd 100 
+
+python3 run_training.py -N 100 --dim-phys 1 -pt coupled -wtn False -tv 0.7 -tlbd 100 -a 0.04 -b 0 -beta 100 -d 2 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-3 -niter 10000 -bs 1000 
