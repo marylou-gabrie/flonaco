@@ -16,7 +16,7 @@ You could learn to jump efficiently form modes to modes of the Gaussian mixture 
 
 From this root folder, install the package in editable mode by running
 ```
-pip install . -e
+pip install -e .
 ```
 
 Then you should be able to run the test
