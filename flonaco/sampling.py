@@ -10,21 +10,21 @@ ref Gelman, Andrew, J. B. Carlin, Hal S. Stern, David B. Dunson, Aki Vehtari, an
 import numpy as np
 import torch
 from flonaco.phifour_utils import PhiFour
+from flonaco.croissant_utils import Croissants
 
 
-def run_langevin(model, x, n_steps, dt, beta):
+def run_langevin(model, x, n_steps, dt):
     '''
     model: model with the potentiel we will run the langevin on
     x (tensor): init points for the chains to update (batch_dim, dim)
     dt -> is multiplied by N for the phiFour before being passed
-    beta (float): inverse temperature
     '''
     optimizer = torch.optim.SGD([x], lr=dt)
 
     def add_noise(grad):
         noise = np.sqrt(2 / (dt * model.beta)) * torch.randn_like(grad)
         return grad + noise
-    
+
     x.register_hook(add_noise)
 
     xs = []
@@ -36,6 +36,44 @@ def run_langevin(model, x, n_steps, dt, beta):
         xs.append(x.clone())
 
     return torch.stack(xs)
+
+
+def run_MALA(target, x_init, n_steps, dt):
+    '''
+    target: target with the potentiel we will run the langevin on
+    -> needs to have grad_U function implemented
+    x (tensor): init points for the chains to update (batch_dim, dim)
+    dt -> is multiplied by N for the phiFour before being passed
+    '''
+
+    xs = []
+    accs = []
+
+    for t in range(n_steps):
+        x = x_init.clone()
+        x.detach_()
+
+        x = x_init - dt * target.grad_U(x_init) 
+        if dt > 0:
+            x += dt * np.sqrt(2 / (dt * target.beta)) * torch.randn_like(x_init)
+    
+        ratio = - target.U(x) 
+        ratio -= ((x_init - x + dt * target.grad_U(x)) ** 2 / (4 * dt)).sum(1)
+        ratio += target.U(x_init) 
+        ratio += ((x - x_init + dt * target.grad_U(x_init)) ** 2 / (4 * dt)).sum(1)
+        ratio = target.beta * ratio
+        ratio = torch.exp(ratio)
+        u = torch.rand_like(ratio)
+        acc = u < torch.min(ratio, torch.ones_like(ratio))
+        x[~acc] = x_init[~acc]
+        
+        accs.append(acc)
+        xs.append(x.clone())
+        x_init = x.clone().detach()
+        
+
+    return torch.stack(xs), torch.stack(accs)
+
 
 
 def run_em_langevin(model, x, n_steps, dt, drift=None, bc=None, beta_ratios=None):
@@ -90,7 +128,6 @@ def run_action_mh_langevin(model, target, xt, n_steps, dt_path, dt, bc=None):
     accs = []
     betadt = target.dt * target.beta
     for t in range(n_steps):
-        #with torch.no_grad():
         x = model.sample(xt.shape[0])
         xt = xt.reshape(-1,model.dim)
 
@@ -100,7 +137,6 @@ def run_action_mh_langevin(model, target, xt, n_steps, dt_path, dt, bc=None):
         u = torch.rand_like(ratio)
         acc = u < torch.min(ratio, torch.ones_like(ratio))
         x[~acc] = xt[~acc]
-        # xs.append(x.clone())
         accs.append(acc)
         xt.data = x.clone().detach()
 
@@ -136,9 +172,9 @@ def run_metropolis(model, target, x_init, n_steps):
 
 def run_metrolangevin(model, target, x_lang, n_steps, dt, lag=1):
     '''
-    model: model with the potential we will run the langevin on
-    x (tensor): init points for the chains to update (batch_dim, dim)
-    dt -> will be multiplied by N for the phiFour
+    model: model with the potential we will run the MCMC on
+    x_lang (tensor): init points for the chains to update (batch_dim, dim)
+    dt: time step in Langevin -> will be multiplied by N for the phiFour
     lag (int): number of Langevin steps before considering resampling
     '''
     optimizer = torch.optim.SGD([x_lang], lr=dt)
@@ -171,6 +207,48 @@ def run_metrolangevin(model, target, x_lang, n_steps, dt, lag=1):
 
     return torch.stack(xs), torch.stack(accs)
 
+def run_metromalangevin(model, target, x_lang, n_steps, dt, lag=1):
+    '''
+    Coversely to the metrolangevin, Langevin steps are corrected by M.H. here.
+
+    model: model with the potential we will run the MCMC on
+    x_lang (tensor): init points for the chains to update (batch_dim, dim)
+    dt: time step in Langevin -> will be multiplied by N for the phiFour
+    lag (int): number of Langevin steps before considering resampling
+    '''
+    xs = []
+    accs = []
+    for t in range(n_steps):
+        if t % lag == 0:
+            x = model.sample(x_lang.shape[0])
+            ratio = - target.beta * target.U(x) + model.nll(x)
+            ratio += target.beta * target.U(x_lang) - model.nll(x_lang)
+            ratio = torch.exp(ratio)
+            u = torch.rand_like(ratio)
+            acc = u < torch.min(ratio, torch.ones_like(ratio))
+            x[~acc] = x_lang[~acc]
+            accs.append(acc) 
+            x_lang.data = x.clone()
+
+        x = x_lang.clone()
+        x = x_lang - dt * target.grad_U(x_lang) 
+        if dt > 0:
+            x += dt * np.sqrt(2 / (dt * target.beta)) * torch.randn_like(x_lang)
+    
+        ratio = - target.U(x) 
+        ratio -= ((x_lang - x + dt * target.grad_U(x)) ** 2 / (4 * dt)).sum(1)
+        ratio += target.U(x_lang) 
+        ratio += ((x - x_lang + dt * target.grad_U(x_lang)) ** 2 / (4 * dt)).sum(1)
+        ratio = target.beta * ratio
+        ratio = torch.exp(ratio)
+        u = torch.rand_like(ratio)
+        acc = u < torch.min(ratio, torch.ones_like(ratio))
+        x[~acc] = x_lang[~acc]
+        x_lang.data = x.clone()
+
+        xs.append(x_lang.clone())
+
+    return torch.stack(xs), torch.stack(accs)
 
 def estimate_deltaF(model1, model2, 
                     xs_chains=None,

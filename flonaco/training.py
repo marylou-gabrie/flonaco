@@ -1,15 +1,21 @@
 import copy
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import numpy as np
+import time
 import torch
+from torch.nn.utils import clip_grad_norm_
 import flonaco.gaussian_utils
 import flonaco.phifour_utils
 from flonaco.phifour_utils import PhiFour
 from flonaco.gaussian_utils import MoG
+from flonaco. croissant_utils import Croissants
 from flonaco.sampling import (
     run_langevin,
+    run_MALA,
     run_metropolis,
     run_metrolangevin,
+    run_metromalangevin,
     run_action_langevin,
     estimate_deltaF,
     compute_ESS
@@ -17,14 +23,17 @@ from flonaco.sampling import (
 
 
 def train(model, target, n_iter=10, lr=1e-1, bs=100,
+          use_scheduler=False,
+          step_schedule=10000,
           args_loss={'type': 'fwd', 'samp': 'direct'},
           args_stop={'acc': None},
           estimate_tau=False,
           return_all_xs=True,
           jump_tol=1e2,
-          save_splits=10):
+          save_splits=10,
+          grad_clip=1e4):
     """"
-    Main training function.
+    Main training/sampling function.
 
     Args:
         model (Realnvp_MLP)
@@ -32,6 +41,8 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
         n_iter (int)
         lr (float): learning rate
         bs (int): batchsize
+        use_scheduler (bool): if learning rate schedule should be used
+        step_schedule (int): iteration frequency of schedule   
         args_loss (dict): 
                     'type' - loss type 'fwd', 'bwd', 'js'
                     'samp' - sampling method 'langevin', 'direct', 'mhlangevin' 
@@ -64,9 +75,27 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
         elif args_loss['type'] in ['bwd']:
             def sample_func(bs): return model.sample(bs)
             kwargs = {}
+    elif args_loss['samp'] == 'mh':
+        if args_loss['x_init_samp'] is None:
+            x_init = model.sample(args_loss['n_tot'])
+        else:
+            x_init = args_loss['x_init_samp'][:args_loss['n_tot']]
 
-    ## setting initialization for chain methods
+        def sample_func(bs, x_init=x_init, acc_rate=None):
+            n_steps = int(bs / x_init.shape[0])
+            x, acc = run_metropolis(
+                model, target, x_init, n_steps)
+            kwargs['x_init'] = x[-1, ...]
+            
+            kwargs['acc_rate'] = (acc.cpu().numpy() * 1).mean()
+            return x
+
+        kwargs = {'x_init': x_init}
+
+
+    
     elif 'langevin' in args_loss['samp']:
+        ## setting initialization for chain methods
         skip_burnin = False
         assert args_loss['n_tot'] <= bs
         
@@ -77,7 +106,7 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
             x_init = torch.randn(args_loss['n_tot'], model.dim,
                                  device=model.device)
             print('Random init!')
-        elif isinstance(target, MoG):
+        elif isinstance(target, MoG) or isinstance(target, Croissants):
             x_init = torch.stack(target.means)
             x_init = x_init.repeat_interleave(
                 int(args_loss['n_tot'] / len(target.means)), dim=0)
@@ -118,6 +147,27 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
                 kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
                 kwargs['acc_rate'] = (acc.cpu().numpy() * 1).mean()
                 return x
+        elif args_loss['samp'] == 'mhmalangevin':
+
+            def sample_func(bs, x_init=x_init, dt=100, beta=1, alpha=0, acc_rate=None):
+                n_steps = int(bs / x_init.shape[0])
+                # x, acc = run_metrolangevin_dirpas(
+                x, acc = run_metromalangevin(
+                    model, target, x_init, n_steps, dt * model.dim)
+                kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
+                kwargs['acc_rate'] = (acc.cpu().numpy() * 1).mean()
+                return x
+    
+        elif args_loss['samp'] == 'malangevin':
+
+            def sample_func(bs, x_init=x_init, dt=100, beta=1, acc_rate=None):
+                n_steps = int(bs / x_init.shape[0])
+                # x, acc = run_metrolangevin_dirpas(
+                x, acc = run_MALA(
+                    target, x_init, n_steps, dt=dt * model.dim)
+                kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
+                kwargs['acc_rate'] = (acc.cpu().numpy() * 1).mean()
+                return x
 
         elif args_loss['samp'] == 'langevin_action':
 
@@ -133,15 +183,24 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
 
         if not skip_burnin:
             bs_burnin = int(args_loss['n_steps_burnin'] * x_init.shape[0])
-            x = sample_func(bs_burnin, **kwargs)
+            start = time.time()
+            n_steps = int(bs_burnin / x_init.shape[0])
+            x = run_langevin(target, x_init, n_steps, args_loss['dt'] * model.dim)
+            kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
+            print('Langevin burnin done! time: {:f}s'.format(time.time() - start))
             print('Burn-in done!')
 
     assert sample_func is not None
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    if use_scheduler:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
+                                                    step_size=step_schedule, 
+                                                    gamma=0.5)
 
-    plt.figure(figsize=(15, 5))
-    axs = [plt.subplot(2, 5, i + 1) for i in range(10)]
+    fig = plt.figure(figsize=(15, 5))
+    gs = gridspec.GridSpec(2, 5)
+    axs = [fig.add_subplot(gs[a]) for a in range(10)]
     a = 0  # counter index for axs
 
     # logs
@@ -150,6 +209,8 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
     models = [copy.deepcopy(model)]
     taus = []
     acc_rates = []
+    acc_rates_mala = []
+    grad_norms = []
 
     for t in range(n_iter):
         optimizer.zero_grad()
@@ -187,41 +248,61 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
             return model, losses, xs
 
         loss.backward()
+        clip_grad_norm_(model.parameters(), max_norm=grad_clip)
         optimizer.step()
 
         losses.append(loss.item())
+
+        if t % (n_iter / 100) == 0:
+            total_norm = 0
+            for p in model.parameters():
+                param_norm = p.grad.detach().data.norm(2)
+                total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5 
+            grad_norms.append(total_norm)
+
+        if use_scheduler:
+            scheduler.step()
 
         if estimate_tau:
             tau = x.shape[0] * x.shape[1] / \
                 np.mean(compute_ESS(x.detach().cpu()))
             taus.append(tau)
 
-        if 'mh' in args_loss['samp']:
-            acc_rates.append(kwargs['acc_rate'])
+        x_last = x.clone()
+        _, acc = run_metropolis(model, target, x_last, 1)
+        acc_rate = (acc.cpu().numpy() * 1).mean()
+        acc_rates.append(acc_rate.item())
+        _, acc = run_MALA(target, x_last, 1,  dt=args_loss['dt'] * model.dim)
+        acc_rate = (acc.cpu().numpy() * 1).mean()
+        acc_rates_mala.append(acc_rate.item())
 
+        #prints
         if t % (n_iter / save_splits) == 0 or n_iter <= save_splits:
             models.append(copy.deepcopy(model))
-            print('t={:0.0e}'.format(t),
-                  'Loss: {:3.2f}'.format(loss.item()), end='\t')
+            print('t={:0.1e}'.format(t),
+                  'Loss: {:3.2f}'.format(loss.item()), end='  \t')
 
-            if args_stop['acc'] is not None:
-                x_last = x.clone()
-                _, acc = run_metropolis(model, target, x_last, 1)
-                acc_rate = (acc.cpu().numpy() * 1).mean()
-                
-                if acc_rate > args_stop['acc']:
-                    print('Early Stopping, threshold acceptance reached')
-                    break
+            print('mh acc: {:0.2e}, mala acc: {:0.2e}'.format(acc_rates[-1],
+                                                      acc_rates_mala[-1]),
+                                                      end='\t')
 
-                print('Accept: ', acc_rates[-1], end='\t')
+            print('Gd: {:0.0e}'.format(total_norm), end='\t')
 
-                acc_rates.append(acc_rate.item())
-            
+            for param_group in optimizer.param_groups:
+                print('lr: {:0.2e}'.format(param_group['lr']), end='\t')
+
+                # compute fraction with mean > 0 or mean < 1
+            if isinstance(target, PhiFour):
+                x_gen = model.sample(xs[-1].shape[1])
+                frac_pos = (x_gen.mean(1) > 0).sum() / float(x_gen.shape[0])
+                print('Frac gen pos: {:0.2f}'.format(frac_pos.item()))
+
             print('')
 
         if t % (n_iter / 10) == 0:
             if model.dim == 2:
-                assert isinstance(target, MoG)
+                assert isinstance(target, MoG) or isinstance(target, Croissants)
                 x_min = -10 if isinstance(target, MoG) else -0.5
                 x_max = 10 if isinstance(target, MoG) else 0.5
                 flonaco.gaussian_utils.plot_2d_level(model, ax=axs[a],
@@ -243,14 +324,8 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
                         plt.plot(x_gen[i, :].detach().cpu(),
                                  c='k', alpha=0.2)
 
-                    # compute fraction with mean > 0 or mean < 1
-                    frac_pos = (x_gen.mean(1) > 0).sum() / \
-                        float(x_gen.shape[0])
-                    print('Frac gen pos: {:0.2f}'.format(frac_pos.item()))
-            
             plt.tight_layout()
-            a += 1 # update counter of axes to plots
-        
+            a += 1  # update counter of axes to plots
 
     to_return = {
         'model': model,
@@ -258,7 +333,9 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
         'xs': xs,
         'models': models,
         'taus': taus,
-        'acc_rates': acc_rates
+        'acc_rates': acc_rates,
+        'acc_rates_mala': acc_rates_mala,
+        'grad_norms': grad_norms,
     }
 
     return to_return

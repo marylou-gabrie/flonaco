@@ -2,13 +2,11 @@ import argparse
 import copy
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import time
 import torch
 
 from flonaco.phifour_utils import PhiFour
 from flonaco.real_nvp_mlp import RealNVP_MLP
-from flonaco.sampling import estimate_deltaF
 from flonaco.training import train
 from flonaco.utils_io import get_file_name
 
@@ -146,7 +144,7 @@ results = {
     'taus': to_return['taus']
 }
 
-filename = get_file_name(args_target, args_rnvp, args_training,
+filename = get_file_name(args_target, args_training, args_model=args_rnvp, 
                             date=date, random_id=args.slurm_id,
                             data_home=data_home)
 torch.save(results, filename)

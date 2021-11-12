@@ -8,7 +8,7 @@ Concretely, instead of having Langevin walkers stuck in the modes they started o
 
 ![alt text](plots/animation_twowalker_merelangevin.gif) 
 
-You could learn to jump efficiently form modes to modes (learned density in blue and walkers trajectory still in black): 
+You could learn to jump efficiently form modes to modes of the Gaussian mixture above (learned density in blue and walkers trajectory still in black): 
 
 ![alt text](plots/animation_2walkers_mhlangevin.gif)
 

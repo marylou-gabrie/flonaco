@@ -56,3 +56,5 @@ _ = train(model, phi4, n_iter=int(1e1), lr=1e-2, bs=bs,
 model = _['models'][-1]
 xs = _['xs']
 x_init_samp = xs[-1].reshape(bs, model.dim)
+
+plt.show(block=False)

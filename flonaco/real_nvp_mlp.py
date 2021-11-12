@@ -81,6 +81,9 @@ class RealNVP_MLP(nn.Module):
                  prior_arg={'type': 'standn'},
                  mask_type='half',  
                  hidden_dim=10,
+                 hidden_depth=3,
+                 hidden_bias=True,
+                 hidden_activation=torch.relu,
                  device='cpu'):
         super(RealNVP_MLP, self).__init__()
 
@@ -89,8 +92,10 @@ class RealNVP_MLP(nn.Module):
         self.n_blocks = n_realnvp_blocks
         self.block_depth = block_depth
         self.couplings_per_block = 2  # one update of entire layer per block 
-        self.n_layers_in_coupling = 3  # depth of MLPs in coupling layers 
+        self.n_layers_in_coupling = hidden_depth  # depth of MLPs in coupling layers 
         self.hidden_dim_in_coupling = hidden_dim
+        self.hidden_bias = hidden_bias
+        self.hidden_activation = hidden_activation
         self.init_scale_in_coupling = init_weight_scale
 
         mask = torch.ones(dim, device=self.device)
@@ -134,6 +139,17 @@ class RealNVP_MLP(nn.Module):
             self.prior_distrib = MultivariateNormal(
                 torch.zeros((dim,), device=self.device),
                 precision_matrix=self.prior_prec)
+
+        elif prior_arg['type'] == 'white':
+            cov = prior_arg['cov']
+            self.prior_prec = torch.inverse(cov).to(device)
+            self.prior_prec = 0.5 * (self.prior_prec + self.prior_prec.T)
+            self.prior_mean = prior_arg['mean'].to(device)
+            self.prior_log_det = - torch.logdet(self.prior_prec)
+            self.prior_distrib = MultivariateNormal(
+                prior_arg['mean'],
+                precision_matrix=self.prior_prec
+                )
 
         elif prior_arg['type'] == 'bridge':
             self.bridge_kwargs = prior_arg['bridge_kwargs']
@@ -200,6 +216,7 @@ class RealNVP_MLP(nn.Module):
             couplings = self.build_coupling_block(layer_dims)
 
             coupling_layers.append(nn.ModuleList(couplings))
+
         return nn.ModuleList(coupling_layers)
 
     def build_coupling_block(self, layer_dims=None, nets=None, reverse=False):
@@ -232,6 +249,8 @@ class RealNVP_MLP(nn.Module):
             dt = self.bridge_kwargs["dt"]
             prior_nll = bridge_energy(z, dt=dt, a_min=a_min, b_min=b_min, device=self.device)
             return prior_nll - log_det_jac
+        elif self.prior_arg['type'] == 'white':
+                z = z - self.prior_mean
 
         prior_ll = - 0.5 * torch.einsum('ki,ij,kj->k', z, self.prior_prec, z)
         prior_ll -= 0.5 * (self.dim * np.log(2 * np.pi) + self.prior_log_det)
@@ -246,24 +265,22 @@ class RealNVP_MLP(nn.Module):
         elif self.prior_arg['type'] == 'bridge':
             # get a bridge
             n_steps = self.bridge_kwargs["n_steps"]
-            bridges = torch.zeros(n,n_steps-2,1,2,device=self.device)
+            bridges = torch.zeros(n, n_steps - 2, 1, 2, device=self.device)
             for i in range(n):
                 bridges[i,:] = get_bridge(**self.bridge_kwargs)
-            z = bridges.detach().requires_grad_().view(n,-1)
+            z = bridges.detach().requires_grad_().view(n, -1)
         else:
-            z = self.prior_distrib.rsample(torch.Size([n,])).to(self.device)
+            z = self.prior_distrib.rsample(torch.Size([n, ])).to(self.device)
 
         return self.forward(z)[0]
 
     def U(self, x):
         """
-        without normalisation factor in base distribution
+        alias
         """
-        z, log_det_jac = self.backward(x)
-        prior_ll = - 0.5 * torch.einsum('ki,ij,kj->k', z, self.prior_prec, z)
+        return self.nll(x)
 
-        ll = prior_ll + log_det_jac
-        return -ll
+
 
     def V(self, x):
         z, log_det_jac = self.backward(x)

@@ -1,0 +1,7 @@
+run run_training_mog.py  --dim 2 -k 2 -cov 1 2 -w 1 2 -d 2 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000
+
+run run_training_mog.py  --dim 2 -k 3 -cov 1  -w 2 1 1 -sprd 5 -d 2 -hd 100 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000
+
+run run_training_mogp.py  -pa 100 -hd 100 -samp mhlangevin -nw 100 -dt 1e-4 -rposi 0.5 -lr 1e-2 -niter 10 -bs 1000
+
+run run_training_1crst2d.py  -pic 20 -hdm 100 -d 3 -samp mhlangevin -nw 40 -dt 5e-3 -lr 5e-3 -niter 4 -bs 400

@@ -59,6 +59,15 @@ class MoG(nn.Module):
         args -= torch.log((self.weights.sum() * torch.sqrt((2 * np.pi) ** self.dim * self.dets)))
         return - torch.logsumexp(args, 1)
 
+    def grad_U(self, x_init):
+        x = x_init.detach()
+        x = x.requires_grad_()
+        optimizer = torch.optim.SGD([x], lr=0)
+        optimizer.zero_grad()
+        loss = self.U(x).sum()
+        loss.backward()
+        return x.grad.data
+
 
 def plot_2d_level(model, x_min=-10, x_max=10,
                     y_min=None, y_max=None,

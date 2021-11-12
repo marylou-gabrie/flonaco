@@ -84,4 +84,11 @@ class PhiFour(nn.Module):
 
         return ((x_[:, 1:] - x_[:, :-1]) ** 2 / 2) * self.a * self.dim_grid
 
-
+    def grad_U(self, x_init):
+        x = x_init.detach()
+        x = x.requires_grad_()
+        optimizer = torch.optim.SGD([x], lr=0)
+        optimizer.zero_grad()
+        loss = self.U(x).sum()
+        loss.backward()
+        return x.grad.data
