@@ -26,8 +26,6 @@ class TwoChannel(nn.Module):
         self.beta = 1.
         self.dt = 1.5e-4
         self.n_steps = 100
-        #self.drift = torch.zeros(1, self.dim, device=device)
-
 
         # set up the potential
         self.mu1 = torch.tensor([[0., 1./3.]], device=device)
@@ -39,7 +37,6 @@ class TwoChannel(nn.Module):
         self.A2 = -30.
         self.A3 = -50.
         self.A4 = -50.
-
 
         # set the endpoints
         self.a_center = self.mu4.clone()
@@ -73,7 +70,6 @@ class TwoChannel(nn.Module):
 
     def V(self, x):
         """ Metzner ref """
-        #x = x.reshape(-1,2)
         mixture = self.g(x, self.mu1, self.A1) + self.g(x, self.mu2, self.A2) +\
         self.g(x, self.mu3, self.A3) + self.g(x, self.mu4, self.A4) + 0.2 * torch.sum((x - self.mu1)**4, dim=-1)
         return mixture

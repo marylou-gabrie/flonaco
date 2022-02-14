@@ -101,8 +101,6 @@ def plot_2d_level(model, x_min=-10, x_max=10,
     else:
         plt.sca(ax)
     plt.imshow(np.exp(- Us[::-1])
-    # plt.imshow(Us[::-1],
-        # norm=matplotlib.colors.LogNorm()
         , cmap='jet')
     plt.axis('off')
     plt.colorbar()

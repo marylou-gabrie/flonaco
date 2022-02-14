@@ -9,9 +9,6 @@ ref Gelman, Andrew, J. B. Carlin, Hal S. Stern, David B. Dunson, Aki Vehtari, an
 
 import numpy as np
 import torch
-from flonaco.phifour_utils import PhiFour
-from flonaco.croissant_utils import Croissants
-
 
 def run_langevin(model, x, n_steps, dt):
     '''

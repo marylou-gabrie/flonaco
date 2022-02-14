@@ -7,11 +7,6 @@ import torch.nn.functional as F
 from flonaco.phifour_utils import PhiFour
 from flonaco.real_nvp_mlp import RealNVP_MLP
 from flonaco.training import train
-from flonaco.utils_plots import (
-    plot_map_point_cloud, 
-    plot_map_point_cloud_Fourier,
-    plot_Fourier_spectrum
-)
 
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

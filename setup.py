@@ -7,7 +7,7 @@ mixture of Gaussians, stochastic Allen-Cahn and transition paths.
 
 setuptools.setup(
     name="flonaco",
-    version="0.0.1",
+    version="0.1.1",
     author="Marylou Gabrié, Grant Rotskoff, Eric Vanden-Eijnden",
     author_email="mgabrie@nyu.edu",
     description="python package for sampling with real-nvp flows",

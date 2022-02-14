@@ -280,8 +280,6 @@ class RealNVP_MLP(nn.Module):
         """
         return self.nll(x)
 
-
-
     def V(self, x):
         z, log_det_jac = self.backward(x)
         return self.beta_prior * (z ** 2 / 2).sum(dim=-1) / self.coef - log_det_jac

@@ -17,7 +17,6 @@ from flonaco.sampling import (
     run_metrolangevin,
     run_metromalangevin,
     run_action_langevin,
-    estimate_deltaF,
     compute_ESS
 )
 
@@ -151,7 +150,6 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
 
             def sample_func(bs, x_init=x_init, dt=100, beta=1, alpha=0, acc_rate=None):
                 n_steps = int(bs / x_init.shape[0])
-                # x, acc = run_metrolangevin_dirpas(
                 x, acc = run_metromalangevin(
                     model, target, x_init, n_steps, dt * model.dim)
                 kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
@@ -162,7 +160,6 @@ def train(model, target, n_iter=10, lr=1e-1, bs=100,
 
             def sample_func(bs, x_init=x_init, dt=100, beta=1, acc_rate=None):
                 n_steps = int(bs / x_init.shape[0])
-                # x, acc = run_metrolangevin_dirpas(
                 x, acc = run_MALA(
                     target, x_init, n_steps, dt=dt * model.dim)
                 kwargs['x_init'] = x[-1, ...].detach().requires_grad_()
